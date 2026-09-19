@@ -1,17 +1,15 @@
 {
   "compilerOptions": {
-    /* Base Options */
     "target": "ES2022",
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
+    
     "lib": ["ES2022"],
     
-    /* Output Options */
     "outDir": "./dist",
     "rootDir": "./src",
     "removeComments": true,
     
-    /* Strict Type-Checking Options */
     "strict": true,
     "noImplicitAny": true,
     "strictNullChecks": true,
@@ -19,12 +17,10 @@
     "noImplicitThis": true,
     "alwaysStrict": true,
     
-    /* Interoperability Options */
     "esModuleInterop": true,
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
     
-    /* Completeness */
     "skipLibCheck": true
   },
   "include": ["src/**/*"],

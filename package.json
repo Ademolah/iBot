@@ -2,7 +2,7 @@
   "name": "ibot",
   "version": "1.0.0",
   "description": "",
-  "main": "index.js",
+  "main": "dist/index.js",
   "scripts": {
     "dev": "tsx watch src/index.ts | pino-pretty",
     "build": "tsc",
@@ -11,7 +11,7 @@
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "type": "commonjs",
+  "type": "module",
   "dependencies": {
     "@whiskeysockets/baileys": "^7.0.0-rc14",
     "dotenv": "^18.0.1",
