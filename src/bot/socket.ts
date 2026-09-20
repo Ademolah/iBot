@@ -9,6 +9,7 @@ import qrcode from 'qrcode-terminal';
 import { logger } from '../utils/logger.js';
 import { useRedisAuthState } from './auth.js';
 import { redisClient } from '../config/redis.js';
+import { setupMessageListeners } from './event.js';
 
 export const startBot = async () => {
   logger.info('Initializing iBot...');
@@ -25,7 +26,7 @@ export const startBot = async () => {
     },
     printQRInTerminal: false, // We will handle this manually below
     logger: logger.child({ module: 'baileys' }),
-    browser: ['Vendor Smart Assistant', 'Chrome', '1.0.0'], // Identifies the bot cleanly
+    browser: ['Mac OS', 'Chrome', '1.0.0'],  // Identifies the bot cleanly
     syncFullHistory: false, // Prevents downloading years of old group messages on start
   });
 
@@ -59,14 +60,18 @@ export const startBot = async () => {
   });
 
   // Save credentials continuously as Meta rotates encryption keys
-  sock.ev.on('creds.update', saveCreds);
-
-  // Future Event Listener hook for Phase 3 (Message listening)
-  sock.ev.on('messages.upsert', async (m) => {
-    if (m.type === 'notify') {
-       logger.debug(`Received ${m.messages.length} new messages.`);
+  // Inside src/bot/socket.ts:
+  sock.ev.on('creds.update', async () => {
+    try {
+      await saveCreds();
+    } catch (err) {
+      logger.error(err, 'Failed to save credentials updates to Redis');
     }
   });
+
+
+  // Future Event Listener hook for Phase 3 (Message listening)
+  setupMessageListeners(sock);
 
   return sock;
 };

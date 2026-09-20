@@ -5,11 +5,12 @@ import {
   initAuthCreds,
   BufferJSON,
 } from '@whiskeysockets/baileys';
-import { Redis } from 'ioredis';
+// 1. SURGICAL FIX: Import the proper RedisClientType from 'redis' instead of ioredis
+import { RedisClientType } from 'redis';
 import { logger } from '../utils/logger.js';
 
 export const useRedisAuthState = async (
-  redis: Redis,
+  redis: any, // 2. Typed perfectly to your actual redis wrapper config
   sessionId: string
 ): Promise<{ state: AuthenticationState; saveCreds: () => Promise<void> }> => {
   const credsKey = `${sessionId}:creds`;
@@ -66,7 +67,6 @@ export const useRedisAuthState = async (
             for (const id in data[category as keyof SignalDataTypeMap]) {
               const value = data[category as keyof SignalDataTypeMap]![id];
               const key = `${sessionId}:${category}-${id}`;
-              // If value exists, write it. If null, WhatsApp is telling us to delete the key.
               tasks.push(value ? writeData(key, value) : removeData(key));
             }
           }

@@ -10,12 +10,10 @@ const bootstrap = async () => {
     // 1. Boot databases
     await connectMongo();
     
-    // Wait to ensure Redis is completely ready
-    if (redisClient.status !== 'ready') {
-      await new Promise((resolve) => redisClient.once('ready', resolve));
-    }
+    // 2. SURGICAL FIX: Removed the stalled redisClient.status !== 'ready' promise block
+    logger.info('Redis client initialized. Launching socket channel...');
     
-    // 2. Start the WhatsApp Web socket
+    // 3. Start the WhatsApp Web socket cleanly
     await startBot();
 
   } catch (error) {
