@@ -68,8 +68,12 @@ export const handleIncomingMessage = async (
 
     const lowerText = cleanText.toLowerCase();
 
+    // 🔍 REAL-TIME DEBUG TRACE 1: Entry Confirmation
+    logger.info(`🔍 [PIPELINE ENTRY]: Intercepted raw text stream: "${cleanText}" inside group: ${remoteJid}`);
+
     // 🚀 QUICK RE-ADD TEST COMMANDS (Bypasses matcher for easier system testing if needed)
     if (lowerText === '!ping') {
+      logger.info('🎯 [TEST SUCCESS]: Intercepted !ping baseline verification handler token.');
       await sock.sendMessage(remoteJid, { text: '🤖 *iBot Online:* Dynamic multi-tenant pipeline active! ⚡' });
       return;
     }
@@ -78,12 +82,23 @@ export const handleIncomingMessage = async (
     const hasExplicitIntent = BUYING_INTENT_KEYWORDS.some((keyword) => lowerText.includes(keyword));
     const mentionsCoreAnchor = CORE_ANCHOR_KEYWORDS.some((anchor) => lowerText.includes(anchor));
 
-    // Fast-fail only if it has absolutely zero intent markers AND zero high-value catalog items
-    if (!hasExplicitIntent && !mentionsCoreAnchor) return;
+    // 🔍 REAL-TIME DEBUG TRACE 2: Evaluation Score Metrics
+    logger.info(`📊 [KEYWORD CHECK]: hasExplicitIntent=${hasExplicitIntent} | mentionsCoreAnchor=${mentionsCoreAnchor}`);
+
+    if (!hasExplicitIntent && !mentionsCoreAnchor) {
+      logger.info(`⏭️ [PIPELINE SKIP]: Message text drop. Does not match intent or anchor signatures.`);
+      return;
+    }
 
     // 4. INVENTORY QUERY LAYER: Run direct semantic match
+    logger.info(`💾 [DB CACHE QUERY]: Dispatching search strings into the findMatchingGadget service loop...`);
     const match = await findMatchingGadget(lowerText);
-    if (!match) return;
+    
+    if (!match) {
+      // 🔍 REAL-TIME DEBUG TRACE 3: Catch empty catalog filter misses or connection freezes transparently
+      logger.info(`❌ [MATCHER MISS]: findMatchingGadget evaluated to null. No fuzzy index matches exist in your active stock list.`);
+      return;
+    }
 
     logger.info(`✨ [COMMERCIAL MATCH]: Found item (${match.name}) from sender in group ${remoteJid}`);
 
@@ -100,6 +115,8 @@ export const handleIncomingMessage = async (
     }
 
     // 6. DISPATCH PRIVATE TRANSACTION ALERT (Now explicitly passes the alertPhoneNumber parameter down the line)
+    logger.info(`✉️ [DISPATCH CHANNELS]: Invoking sendClientAlert wrapper. Target client number routing to: ${alertPhoneNumber || process.env.CLIENT_PHONE_NUMBER}`);
+
     await sendClientAlert(sock, match, groupName, sender, cleanText, alertPhoneNumber);
 
   } catch (error) {
