@@ -1,7 +1,6 @@
 import makeWASocket, {
   DisconnectReason,
   makeCacheableSignalKeyStore,
-  // 1. Import the proper TypeScript type for connection updates
   ConnectionState, 
 } from '@whiskeysockets/baileys';
 import { Boom } from '@hapi/boom';
@@ -11,13 +10,14 @@ import { useRedisAuthState } from './auth.js';
 import { redisClient } from '../config/redis.js';
 import { setupMessageListeners } from './event.js';
 
-export const startBot = async () => {
-  logger.info('Initializing iBot...');
+// 🌟 COMMERCIAL SaaS REFACTOR: Accepts dynamic session definitions per active subscriber
+export const startBot = async (sessionId: string = 'vendor-bot-session', alertPhoneNumber?: string) => {
+  logger.info(`Initializing iBot Instance for Session: [${sessionId}]...`);
 
-  // Initialize our custom Redis Auth
-  const { state, saveCreds } = await useRedisAuthState(redisClient, 'vendor-bot-session');
+  // Initialize our custom Redis Auth using the dynamic dynamic tenant sessionId namespace
+  const { state, saveCreds } = await useRedisAuthState(redisClient, sessionId);
 
-  // 2. SURGICAL FIX: Call makeWASocket directly (removed .default)
+  // 2. Call makeWASocket directly with unique child logging context per instance
   const sock = makeWASocket({
     auth: {
       creds: state.creds,
@@ -25,17 +25,17 @@ export const startBot = async () => {
       keys: makeCacheableSignalKeyStore(state.keys, logger),
     },
     printQRInTerminal: false, // We will handle this manually below
-    logger: logger.child({ module: 'baileys' }),
+    logger: logger.child({ module: `baileys-${sessionId}`, level: 'warn' }),
     browser: ['Mac OS', 'Chrome', '1.0.0'],  // Identifies the bot cleanly
     syncFullHistory: false, // Prevents downloading years of old group messages on start
   });
 
-  // 3. SURGICAL FIX: Explicitly type the 'update' parameter as Partial<ConnectionState>
+  // 3. Handle dynamic connection lifecycles per running client container
   sock.ev.on('connection.update', (update: Partial<ConnectionState>) => {
     const { connection, lastDisconnect, qr } = update;
 
     if (qr) {
-      logger.info('Action Required: Scan the QR code below to link the bot number:');
+      logger.info(`✨ [QR GENERATED] Session: [${sessionId}]. Scan the QR code below to link the bot number:`);
       qrcode.generate(qr, { small: true });
     }
 
@@ -44,31 +44,35 @@ export const startBot = async () => {
         (lastDisconnect?.error as Boom)?.output?.statusCode !== DisconnectReason.loggedOut;
       
       logger.warn(
-        { reason: (lastDisconnect?.error as Boom)?.output?.statusCode },
+        { reason: (lastDisconnect?.error as Boom)?.output?.statusCode, sessionId },
         'Connection closed.'
       );
 
       if (shouldReconnect) {
-        logger.info('Attempting to reconnect...');
-        startBot(); // Re-initialize if dropped due to network issues
+        logger.info(`Attempting to reconnect dynamic session: [${sessionId}]...`);
+        startBot(sessionId, alertPhoneNumber); // Re-initialize specific dynamic tenant instance loops
       } else {
-        logger.fatal('Bot was logged out. You must clear Redis and scan a new QR code.');
+        logger.fatal(`Bot instance [${sessionId}] was logged out. You must clear Redis keys and scan a new QR code.`);
       }
     } else if (connection === 'open') {
-      logger.info('✅ WhatsApp connection successfully established!');
+      logger.info(`✅ WhatsApp connection successfully established for session: [${sessionId}]!`);
     }
   });
 
   // Save credentials continuously as Meta rotates encryption keys
-  // Inside src/bot/socket.ts:
   sock.ev.on('creds.update', async () => {
     try {
       await saveCreds();
     } catch (err) {
-      logger.error(err, 'Failed to save credentials updates to Redis');
+      logger.error(err, `Failed to save credentials updates to Redis for session: ${sessionId}`);
     }
   });
 
+  // 🌟 Dynamic Attachment Layer: Store the custom alert number context inside the socket object instance
+  // This allows your downstream event filters (like message.ts) to read it effortlessly
+  if (alertPhoneNumber) {
+    (sock as any).alertPhoneNumber = alertPhoneNumber;
+  }
 
   // Future Event Listener hook for Phase 3 (Message listening)
   setupMessageListeners(sock);

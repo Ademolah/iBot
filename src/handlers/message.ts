@@ -1,150 +1,109 @@
-// import { WASocket, proto } from '@whiskeysockets/baileys';
-// import { findMatchingGadget } from '../services/matcher.js';
-// import { sendClientAlert } from '../services/alert.js';
-// import { logger } from '../utils/logger.js';
-
-// // Common phrases indicating someone is looking to buy
-// const BUYING_INTENT_KEYWORDS = ['need', 'want', 'looking for', 'who has', 'price for', 'lf', 'wtb'];
-
-// export const handleIncomingMessage = async (sock: WASocket, msg: proto.IWebMessageInfo) => {
-//   // 1. SURGICAL FIX: Ensure key and message are both safely populated
-//   if (!msg.key || !msg.message) return;
-
-//   const remoteJid = msg.key.remoteJid;
-//   // Only process messages from groups
-//   if (!remoteJid || !remoteJid.endsWith('@g.us')) return;
-
-//   // Extract text based on whether it's a standard text or a reply/extended text
-//   const messageText = 
-//     msg.message.conversation || 
-//     msg.message.extendedTextMessage?.text;
-
-//   if (!messageText) return;
-
-//   const lowerText = messageText.toLowerCase();
-
-//   // Fast fail: If the message doesn't contain a buying intent keyword, ignore it
-//   const hasIntent = BUYING_INTENT_KEYWORDS.some((keyword) => lowerText.includes(keyword));
-//   if (!hasIntent) return;
-
-//   // Search the inventory
-//   const match = await findMatchingGadget(lowerText);
-
-//   if (match) {
-//     logger.info(`Match found: ${match.name} in group ${remoteJid}`);
-    
-//     // Fetch group metadata to get the actual group name
-//     let groupName = 'Unknown Group';
-//     try {
-//       const groupMetadata = await sock.groupMetadata(remoteJid);
-//       groupName = groupMetadata.subject;
-//     } catch (e) {
-//       logger.warn('Could not fetch group metadata');
-//     }
-
-//     const sender = msg.key.participant || remoteJid;
-
-//     // Trigger the alert
-//     await sendClientAlert(sock, match, groupName, sender, messageText);
-//   }
-// };
-
 import { WASocket, proto } from '@whiskeysockets/baileys';
 import { findMatchingGadget } from '../services/matcher.js';
 import { sendClientAlert } from '../services/alert.js';
 import { logger } from '../utils/logger.js';
-import { env } from '../config/env.js'; // Imported env to access the client phone number
 
-// Common phrases indicating someone is looking to buy
-const BUYING_INTENT_KEYWORDS = ['need', 'want', 'looking for', 'who has', 'price for', 'lf', 'wtb'];
+// 🌟 COMMERCIAL GRADED INTENT KEYWORDS: Rich localization targeting Nigerian vendor chat structures
+const BUYING_INTENT_KEYWORDS = [
+  'need', 'want', 'looking for', 'who has', 'price for', 'lf', 'wtb',
+  'how much is', 'how much for', 'cost of', 'who get', 'who dey sell',
+  'where i fit buy', 'available for hire', 'available for rent', 'i check for'
+];
 
-export const handleIncomingMessage = async (sock: WASocket, msg: proto.IWebMessageInfo) => {
-  // 1. SURGICAL FIX: Ensure key and message are both safely populated
-  if (!msg.key || !msg.message) return;
+// 🌟 ANCHOR ASSETS: High-value fallback keywords to detect even if no intent phrase is captured
+const CORE_ANCHOR_KEYWORDS = [
+  // --- VEHICLES & RENTALS ---
+  'prado', 'suv', 'toyota', 'lexus', 'honda', 'mercedes', 'benz', 'g-wagon', 'range rover', 
+  'hilux', 'sienna', 'bus', 'car for hire', 'car rental',
 
-  const remoteJid = msg.key.remoteJid;
-  // Only process messages from groups
-  if (!remoteJid || !remoteJid.endsWith('@g.us')) return;
+  // --- APPLE ECOSYSTEM ---
+  'iphone', 'macbook', 'mac', 'ipad', 'airpods', 'iwatch', 'apple watch', 'imac', 
+  'pro max', 'm1', 'm2', 'm3', 'm4',
 
-  // Extract text based on whether it's a standard text or a reply/extended text
-  const messageText = 
-    msg.message.conversation || 
-    msg.message.extendedTextMessage?.text;
+  // --- LAPTOPS & COMPUTERS ---
+  'laptop', 'hp', 'dell', 'lenovo', 'thinkpad', 'asus', 'acer', 'toshiba', 'surface pro', 
+  'desktop', 'monitor', 'pc', 'hard drive', 'ssd', 'ram', 'core i5', 'core i7', 'core i9',
 
-  if (!messageText) return;
+  // --- SMARTPHONES & TABLETS (ANDROID) ---
+  'samsung', 'galaxy', 'ultra', 'redmi', 'xiaomi', 'infinix', 'techno', 'tecno', 'oppo', 
+  'vivo', 'pixel', 'google pixel', 'tablet', 'tab',
 
-  // 🚀 SURGICAL TEST INSERTION: Real-time Live Bot Response Check
-  if (messageText.trim() === '!ping') {
-    logger.info(`🎯 [TEST SUCCESS]: Received !ping in group JID: ${remoteJid}`);
-    
-    try {
-      await sock.sendMessage(remoteJid, { 
-        text: '🤖 *iBot Online:* Connection verified! Live message listening is fully functional. ⚡' 
-      });
-    } catch (err) {
-      logger.error(err, 'Failed to send test ping response to chat');
+  // --- GAMING CONSOLES & TECH ---
+  'playstation', 'ps4', 'ps5', 'xbox', 'nintendo', 'gaming pc', 'pad', 'controller',
+
+  // --- TELEVISIONS & HOME AUDIO ---
+  'television', 'tv', 'smart tv', 'lg', 'hisense', 'sony', 'panasonic', 'soundbar', 
+  'home theater', 'speaker', 'jbl',
+
+  // --- OFFICE & WORKSTATION ELECTRONICS ---
+  'printer', 'scanner', 'projector', 'inverter', 'solar panel', 'battery', 'generator', 'gen',
+
+  // --- PHOTOGRAPHY & PRODUCTION ---
+  'camera', 'canon', 'nikon', 'sony alpha', 'drone', 'dji', 'ring light', 'microphone', 'mic'
+];
+
+// 🌟 UPGRADED SIGNATURE: Added alertPhoneNumber to match the three arguments sent by event.ts
+export const handleIncomingMessage = async (
+  sock: WASocket, 
+  msg: proto.IWebMessageInfo, 
+  alertPhoneNumber?: string
+) => {
+  try {
+    // 1. PRODUCTION GUARD CLAUSE: Ensure structure exists AND filter out the bot's own outgoing replies
+    if (!msg.key || !msg.message || msg.key.fromMe) return;
+
+    const remoteJid = msg.key.remoteJid;
+    // Strictly isolate group chats to prevent personal DM spam streams
+    if (!remoteJid || !remoteJid.endsWith('@g.us')) return;
+
+    // 2. ROBUST TEXT EXTRACTION: Capture standard, extended, context-replies, and image/media captions
+    const messageText = 
+      msg.message.conversation || 
+      msg.message.extendedTextMessage?.text ||
+      msg.message.imageMessage?.caption ||
+      msg.message.documentMessage?.caption || '';
+
+    const cleanText = messageText.trim();
+    if (!cleanText) return;
+
+    const lowerText = cleanText.toLowerCase();
+
+    // 🚀 QUICK RE-ADD TEST COMMANDS (Bypasses matcher for easier system testing if needed)
+    if (lowerText === '!ping') {
+      await sock.sendMessage(remoteJid, { text: '🤖 *iBot Online:* Dynamic multi-tenant pipeline active! ⚡' });
+      return;
     }
-    return; // Exit early so it doesn't run keyword logic on the test string
-  }
 
-  // 🚨 SURGICAL TEST ALERT INSERTION: Simulated DM Trigger for Prado/MacBook
-  if (messageText.trim() === '!testalert') {
-    logger.info(`🚨 [TEST ALERT]: Intercepted !testalert command. Dispatching simulated sales alert...`);
-    
-    // Hardcoded mock production product payload for pristine testing
-    const mockProduct = {
-      name: 'Prado SUV / MacBook Pro Bundle',
-      price: 1550000,
-    } as any;
+    // 3. DYNAMIC INTENT VERIFICATION LOGIC
+    const hasExplicitIntent = BUYING_INTENT_KEYWORDS.some((keyword) => lowerText.includes(keyword));
+    const mentionsCoreAnchor = CORE_ANCHOR_KEYWORDS.some((anchor) => lowerText.includes(anchor));
+
+    // Fast-fail only if it has absolutely zero intent markers AND zero high-value catalog items
+    if (!hasExplicitIntent && !mentionsCoreAnchor) return;
+
+    // 4. INVENTORY QUERY LAYER: Run direct semantic match
+    const match = await findMatchingGadget(lowerText);
+    if (!match) return;
+
+    logger.info(`✨ [COMMERCIAL MATCH]: Found item (${match.name}) from sender in group ${remoteJid}`);
+
+    // 5. ASYNC CONCURRENT METADATA GATHERING: Prevent thread execution locks
+    let groupName = 'Premium WhatsApp Group';
+    const sender = msg.key.participant || msg.key.remoteJid || remoteJid;
 
     try {
-      const sender = msg.key.participant || remoteJid;
-      let groupName = 'Premium Vendor Marketplace';
-      
-      try {
-        const groupMetadata = await sock.groupMetadata(remoteJid);
-        groupName = groupMetadata.subject;
-      } catch (e) {
-        logger.warn('Could not fetch group metadata for test alert context');
-      }
-
-      // Execute the private routing to the friend's number configured in your .env
-      await sendClientAlert(sock, mockProduct, groupName, sender, 'I need a clean Prado SUV or a MacBook Pro package for an urgent supply contract.');
-      
-      // Send receipt visibility indicator back to the group
-      await sock.sendMessage(remoteJid, { 
-        text: '✅ *iBot Notification Engine:* Simulated sales alert successfully dispatched to the client DM! 💸' 
-      });
-    } catch (err) {
-      logger.error(err, 'Failed to process simulated test alert pipeline');
-    }
-    return; // Exit early to bypass standard production inventory lookup workflows
-  }
-
-  const lowerText = messageText.toLowerCase();
-
-  // Fast fail: If the message doesn't contain a buying intent keyword, ignore it
-  const hasIntent = BUYING_INTENT_KEYWORDS.some((keyword) => lowerText.includes(keyword));
-  if (!hasIntent) return;
-
-  // Search the inventory
-  const match = await findMatchingGadget(lowerText);
-
-  if (match) {
-    logger.info(`Match found: ${match.name} in group ${remoteJid}`);
-    
-    // Fetch group metadata to get the actual group name
-    let groupName = 'Unknown Group';
-    try {
+      // Execute the metadata call with a fallback default to ensure the server doesn't hold up
       const groupMetadata = await sock.groupMetadata(remoteJid);
-      groupName = groupMetadata.subject;
-    } catch (e) {
-      logger.warn('Could not fetch group metadata');
+      groupName = groupMetadata.subject || groupName;
+    } catch (metaErr) {
+      logger.warn({ remoteJid }, 'Could not fetch group metadata dynamically, using fallback structure');
     }
 
-    const sender = msg.key.participant || remoteJid;
+    // 6. DISPATCH PRIVATE TRANSACTION ALERT (Now explicitly passes the alertPhoneNumber parameter down the line)
+    await sendClientAlert(sock, match, groupName, sender, cleanText, alertPhoneNumber);
 
-    // Trigger the alert
-    await sendClientAlert(sock, match, groupName, sender, messageText);
+  } catch (error) {
+    // Top-level pipeline protection: Ensure an isolated processing fault never kills the server process
+    logger.error({ error, msgId: msg.key?.id }, 'Critical failure encountered inside the handleIncomingMessage runtime pipeline');
   }
 };

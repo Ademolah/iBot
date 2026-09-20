@@ -5,12 +5,11 @@ import {
   initAuthCreds,
   BufferJSON,
 } from '@whiskeysockets/baileys';
-// 1. SURGICAL FIX: Import the proper RedisClientType from 'redis' instead of ioredis
-import { RedisClientType } from 'redis';
+import { Redis } from 'ioredis'; // 🌟 Cleaned up import to properly align with your ioredis setup
 import { logger } from '../utils/logger.js';
 
 export const useRedisAuthState = async (
-  redis: any, // 2. Typed perfectly to your actual redis wrapper config
+  redis: Redis, // 🌟 Typed explicitly to your active ioredis engine client wrapper
   sessionId: string
 ): Promise<{ state: AuthenticationState; saveCreds: () => Promise<void> }> => {
   const credsKey = `${sessionId}:creds`;
@@ -27,7 +26,10 @@ export const useRedisAuthState = async (
 
   const writeData = async (key: string, data: any) => {
     try {
-      await redis.set(key, JSON.stringify(data, BufferJSON.replacer));
+      // 🌟 PRODUCTION FIX: Explicitly enforce string casting for nested cryptographic payloads
+      // This protects your ioredis cluster database layer from binary sync failures
+      const payload = typeof data === 'string' ? data : JSON.stringify(data, BufferJSON.replacer);
+      await redis.set(key, payload);
     } catch (error) {
       logger.error({ error, key }, 'Failed to write state to Redis');
     }

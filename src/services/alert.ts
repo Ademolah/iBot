@@ -8,11 +8,20 @@ export const sendClientAlert = async (
   product: IProduct,
   groupName: string,
   buyerNumber: string,
-  rawMessage: string
+  rawMessage: string,
+  alertPhoneNumber?: string // 🌟 Upgraded parameter to handle dynamic tenant numbers
 ): Promise<void> => {
   try {
-    // Format the client's phone number into a WhatsApp JID
-    const clientJid = `${env.CLIENT_PHONE_NUMBER}@s.whatsapp.net`;
+    // 🌟 DYNAMIC ROUTING CHANNEL: Use the instance alert number, fall back to .env if none provided
+    const targetNumber = alertPhoneNumber || env.CLIENT_PHONE_NUMBER;
+    
+    if (!targetNumber) {
+      logger.warn('Skipping alert dispatch: No valid alert phone number provided or configured.');
+      return;
+    }
+
+    // Format the computed phone number into a standard WhatsApp JID
+    const clientJid = `${targetNumber.trim()}@s.whatsapp.net`;
 
     const alertText = 
       `🚨 *SALES ALERT* 🚨\n\n` +
@@ -30,7 +39,7 @@ export const sendClientAlert = async (
     await sock.sendPresenceUpdate('paused', clientJid);
 
     await sock.sendMessage(clientJid, { text: alertText });
-    logger.info(`Alert sent to client for product: ${product.name}`);
+    logger.info(`Alert successfully dispatched to dynamic client JID: ${clientJid} for product: ${product.name}`);
     
   } catch (error) {
     logger.error({ error }, 'Failed to send client alert');
