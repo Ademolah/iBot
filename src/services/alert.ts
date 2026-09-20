@@ -9,7 +9,7 @@ export const sendClientAlert = async (
   groupName: string,
   buyerNumber: string,
   rawMessage: string,
-  alertPhoneNumber?: string // 🌟 Upgraded parameter to handle dynamic tenant numbers
+  alertPhoneNumber?: string 
 ): Promise<void> => {
   try {
     // 🌟 DYNAMIC ROUTING CHANNEL: Use the instance alert number, fall back to .env if none provided
@@ -23,13 +23,49 @@ export const sendClientAlert = async (
     // Format the computed phone number into a standard WhatsApp JID
     const clientJid = `${targetNumber.trim()}@s.whatsapp.net`;
 
+    // Clean up domain roots and device channel identifiers natively
+    const cleanIdSegment = buyerNumber.split('@')[0].split(':')[0];
+    let finalBuyerDisplay = cleanIdSegment;
+
+    // 🌟 RE-ENGINEERED SAAS TRANSLATOR GATEWAY: Handle strict Meta LID isolation architectures
+    if (buyerNumber.endsWith('@lid')) {
+      try {
+        // 1. Check Baileys runtime internal mapping functions
+        const currentLidMap = (sock as any).getLidToPhoneMap ? (sock as any).getLidToPhoneMap() : {};
+        const mappedPhoneNumber = currentLidMap[buyerNumber];
+
+        if (mappedPhoneNumber) {
+          finalBuyerDisplay = mappedPhoneNumber.split('@')[0].split(':')[0];
+          logger.info(`✨ [LID TRANSLATOR SUCCESS]: Resolved ledger ID ${cleanIdSegment} to phone number: ${finalBuyerDisplay}`);
+        } else {
+          // 2. Cross-check via Global Store contacts index arrays if active cache stores are registered
+          const globalStore = (sock as any).store;
+          const contactFromStore = globalStore?.contacts ? globalStore.contacts[buyerNumber] : null;
+          
+          // 3. Ultra Fallback: Scan standard internal identity address labels
+          const contact = (sock as any).contacts ? (sock as any).contacts[buyerNumber] : null;
+          const verifiedContact = contactFromStore || contact;
+
+          if (verifiedContact && (verifiedContact.name || verifiedContact.notify)) {
+            finalBuyerDisplay = `${verifiedContact.name || verifiedContact.notify} (${cleanIdSegment})`;
+          } else {
+            // 4. Commercial UX Guard: If it remains an unmapped LID, strip non-digits to keep it clean
+            finalBuyerDisplay = cleanIdSegment;
+          }
+        }
+      } catch (translationErr) {
+        logger.warn({ translationErr }, 'LID translation dictionary lookup skipped. Defaulting to raw ledger display segment.');
+        finalBuyerDisplay = cleanIdSegment;
+      }
+    }
+
     const alertText = 
       `🚨 *SALES ALERT* 🚨\n\n` +
       `Someone is looking for an item you have in stock!\n\n` +
       `📦 *Item Match:* ${product.name}\n` +
       `💰 *Listed Price:* ₦${product.price.toLocaleString()}\n\n` +
       `📍 *Group:* ${groupName}\n` +
-      `👤 *Buyer:* +${buyerNumber.split('@')[0]}\n\n` +
+      `👤 *Buyer:* +${finalBuyerDisplay}\n\n` +
       `💬 *Their Message:*\n"${rawMessage}"\n\n` +
       `_Reply in the group to close the sale!_`;
 

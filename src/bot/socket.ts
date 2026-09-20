@@ -9,6 +9,7 @@ import { logger } from '../utils/logger.js';
 import { useRedisAuthState } from './auth.js';
 import { redisClient } from '../config/redis.js';
 import { setupMessageListeners } from './event.js';
+import { BotInstance } from '../models/Tenant.js'; // Successfully wired to your core schemas
 
 // 🌟 COMMERCIAL SaaS REFACTOR: Accepts dynamic session definitions per active subscriber
 export const startBot = async (sessionId: string = 'vendor-bot-session', alertPhoneNumber?: string) => {
@@ -30,15 +31,32 @@ export const startBot = async (sessionId: string = 'vendor-bot-session', alertPh
     syncFullHistory: false, // Prevents downloading years of old group messages on start
   });
 
+  // 🌟 Context Attachment: Keep track of sessionId right on the socket instance
+  (sock as any).sessionId = sessionId;
+
   // 3. Handle dynamic connection lifecycles per running client container
-  sock.ev.on('connection.update', (update: Partial<ConnectionState>) => {
+  sock.ev.on('connection.update', async (update: Partial<ConnectionState>) => {
     const { connection, lastDisconnect, qr } = update;
 
+    // A: IF A FRESH QR IS BROADCASTED FROM META
     if (qr) {
-      logger.info(`✨ [QR GENERATED] Session: [${sessionId}]. Scan the QR code below to link the bot number:`);
+      logger.info(`✨ [QR GENERATED] Session: [${sessionId}]. Syncing matrix string to MongoDB catalog...`);
+      
+      try {
+        // Save raw string to MongoDB. Your React dashboard polls this field to render the dynamic canvas!
+        await BotInstance.findOneAndUpdate(
+          { sessionId },
+          { connectionStatus: 'GENERATING_QR', lastQrCode: qr, updatedAt: new Date() }
+        );
+      } catch (dbErr) {
+        logger.error({ dbErr, sessionId }, 'Failed to write active QR matrix to database records');
+      }
+
+      // Keep this intact so you can still scan directly from your terminal during testing!
       qrcode.generate(qr, { small: true });
     }
 
+    // B: IF CONNECTION DROPS OR CLOSES
     if (connection === 'close') {
       const shouldReconnect =
         (lastDisconnect?.error as Boom)?.output?.statusCode !== DisconnectReason.loggedOut;
@@ -48,14 +66,37 @@ export const startBot = async (sessionId: string = 'vendor-bot-session', alertPh
         'Connection closed.'
       );
 
+      try {
+        // Clear old QR strings and drop status to DISCONNECTED inside MongoDB safely
+        await BotInstance.findOneAndUpdate(
+          { sessionId },
+          { connectionStatus: 'DISCONNECTED', lastQrCode: null, updatedAt: new Date() }
+        );
+      } catch (dbErr) {
+        logger.error({ dbErr, sessionId }, 'Failed to clear instance connection metadata markers in DB');
+      }
+
       if (shouldReconnect) {
         logger.info(`Attempting to reconnect dynamic session: [${sessionId}]...`);
         startBot(sessionId, alertPhoneNumber); // Re-initialize specific dynamic tenant instance loops
       } else {
         logger.fatal(`Bot instance [${sessionId}] was logged out. You must clear Redis keys and scan a new QR code.`);
       }
-    } else if (connection === 'open') {
+    } 
+    
+    // C: IF LOGIN HANDSHAKE COMPLETES SUCCESSFULLY
+    else if (connection === 'open') {
       logger.info(`✅ WhatsApp connection successfully established for session: [${sessionId}]!`);
+      
+      try {
+        // Update database to CONNECTED. The dashboard immediately stops polling and displays "Active"
+        await BotInstance.findOneAndUpdate(
+          { sessionId },
+          { connectionStatus: 'CONNECTED', lastQrCode: null, updatedAt: new Date() }
+        );
+      } catch (dbErr) {
+        logger.error({ dbErr, sessionId }, 'Failed to mark instance status as CONNECTED in database');
+      }
     }
   });
 
@@ -69,7 +110,6 @@ export const startBot = async (sessionId: string = 'vendor-bot-session', alertPh
   });
 
   // 🌟 Dynamic Attachment Layer: Store the custom alert number context inside the socket object instance
-  // This allows your downstream event filters (like message.ts) to read it effortlessly
   if (alertPhoneNumber) {
     (sock as any).alertPhoneNumber = alertPhoneNumber;
   }

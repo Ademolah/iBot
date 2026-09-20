@@ -1,8 +1,11 @@
+import http from 'http';
+import app from './app.js'; // 🌟 SURGICAL FIX: Import your separate app routing file
 import { connectMongo } from './config/mongo.js';
 import { redisClient } from './config/redis.js';
 import { startBot } from './bot/socket.js';
 import { logger } from './utils/logger.js';
-import { TenantSession } from './models/TenantSession.js'; // 🌟 Import your new dynamic session schema
+import { TenantSession } from './models/TenantSession.js'; 
+import { env } from './config/env.js';
 
 const bootstrap = async () => {
   try {
@@ -12,7 +15,7 @@ const bootstrap = async () => {
     await connectMongo();
     logger.info('Redis client initialized. Fetching active subscriptions...');
 
-    // 2. COMMERCIAL MULTI-TENANT ENGINE: Fetch all active paying subscribers out of MongoDB
+    // 2. COMMERCIAL MULTI-TENANT ENGINE: Fetch active paying subscribers out of MongoDB
     const activeTenants = await TenantSession.find({ isActive: true });
 
     if (activeTenants.length > 0) {
@@ -36,6 +39,14 @@ const bootstrap = async () => {
       logger.info('ℹ️ [LOCAL STANDALONE]: No commercial tenants found in the database. Spawning default system container...');
       await startBot();
     }
+
+    // 4. ENTERPRISE REST API LAUNCH: Wrap the app import inside an HTTP Server
+    const server = http.createServer(app);
+    const PORT = env.PORT || '3000';
+
+    server.listen(PORT, () => {
+      logger.info(`⚡ [SERVER RUNNING]: Enterprise REST API Engine successfully live on port ${PORT} 🚀`);
+    });
 
   } catch (error) {
     logger.fatal({ error }, 'Failed to bootstrap application safely.');

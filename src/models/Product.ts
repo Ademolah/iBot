@@ -1,6 +1,7 @@
-import { Schema, model, Document } from 'mongoose';
+import mongoose, { Schema, Document, Types } from 'mongoose'; // 🌟 FIXED IMPORTS
 
 export interface IProduct extends Document {
+  tenantId: Types.ObjectId; // SaaS SECURITY: Links every product to its respective subscriber
   name: string;          // e.g., "Apple MacBook Pro M2"
   brand: string;         // e.g., "Apple"
   modelName: string;     // e.g., "MacBook Pro"
@@ -14,6 +15,7 @@ export interface IProduct extends Document {
 
 const productSchema = new Schema<IProduct>(
   {
+    tenantId: { type: Schema.Types.ObjectId, ref: 'Tenant', required: true, index: true }, // Index for fast isolated tenant reads
     name: { type: String, required: true, trim: true },
     brand: { type: String, required: true, trim: true, index: true },
     modelName: { type: String, required: true, trim: true },
@@ -28,4 +30,5 @@ const productSchema = new Schema<IProduct>(
 // Compound Text Index for fast full-text searching
 productSchema.index({ name: 'text', modelName: 'text', aliases: 'text' });
 
-export const Product = model<IProduct>('Product', productSchema);
+// 🌟 PRODUCTION CACHE GUARD: Access 'models' via the root mongoose namespace to prevent SyntaxErrors
+export const Product = mongoose.models?.Product || mongoose.model<IProduct>('Product', productSchema);
