@@ -36,6 +36,24 @@ router.patch('/alert-number', protectTenantRoute, async (req: AuthenticatedReque
 });
 
 // ==========================================
+// FETCH ALL ITEMS IN INVENTORY (For Table View)
+// ==========================================
+router.get('/inventory', protectTenantRoute, async (req: AuthenticatedRequest, res: Response): Promise<any> => {
+  try {
+    // 🌟 SECURITY MANDATE: Only fetch products belonging strictly to THIS logged-in user
+    const products = await Product.find({ tenantId: req.tenantId }).sort({ createdAt: -1 });
+
+    return res.status(200).json({
+      status: 'success',
+      data: products
+    });
+  } catch (error) {
+    return res.status(500).json({ status: 'error', message: 'Failed to fetch inventory records safely.' });
+  }
+});
+
+
+// ==========================================
 // 2. ADD A NEW ITEM TO INVENTORY (Stock Catalog)
 // ==========================================
 router.post('/inventory', protectTenantRoute, async (req: AuthenticatedRequest, res: Response): Promise<any> => {
