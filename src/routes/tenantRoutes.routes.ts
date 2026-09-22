@@ -165,4 +165,41 @@ router.get('/bot/status', protectTenantRoute, async (req: AuthenticatedRequest, 
   }
 });
 
+
+// ==========================================
+// ❌ DELETE AN ITEM FROM INVENTORY
+// ==========================================
+router.delete('/inventory/:id', protectTenantRoute, async (req: AuthenticatedRequest, res: Response): Promise<any> => {
+  try {
+    const productId = req.params.id;
+
+    // 🌟 SECURITY MANDATE: Only delete if the product strictly belongs to THIS logged-in user
+    const deletedProduct = await Product.findOneAndDelete({
+      _id: productId,
+      tenantId: req.tenantId // Prevents cross-tenant data tampering
+    });
+
+    if (!deletedProduct) {
+      return res.status(404).json({ 
+        status: 'error', 
+        message: 'Product not found or you do not have permission to delete it.' 
+      });
+    }
+
+    logger.info(`🗑️ [INVENTORY DELETE]: Product ${deletedProduct.name} removed by tenant ${req.tenantId}`);
+
+    // ⚡ INVALIDATE REDIS INVENTORY CACHE: Forces the matching engine to refresh its active stock list immediately
+    await redisClient.del('inventory:in_stock');
+
+    return res.status(200).json({
+      status: 'success',
+      message: 'Product removed from your stock successfully.'
+    });
+  } catch (error) {
+    logger.error({ error, productId: req.params.id }, 'Failed to delete product from database.');
+    return res.status(500).json({ status: 'error', message: 'Failed to delete inventory record safely.' });
+  }
+});
+
+
 export default router;
