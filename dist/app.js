@@ -1,0 +1,10 @@
+import express from 'express';
+import cors from 'cors';
+import authRoutes from './routes/authRoutes.routes.js';
+import tenantRoutes from './routes/tenantRoutes.routes.js';
+const app = express();
+app.use(cors());
+app.use(express.json());
+app.use('/api/auth', authRoutes);
+app.use('/api/tenant', tenantRoutes);
+export default app;
