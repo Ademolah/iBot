@@ -3,68 +3,83 @@ import { Product, IProduct } from '../models/Product.js';
 import { redisClient } from '../config/redis.js';
 import { logger } from '../utils/logger.js';
 
-const CACHE_KEY = 'inventory:in_stock';
+// 🌟 DYNAMIC GENERATOR: Returns an isolated key unique to this subscriber
+const getCacheKey = (tenantId: string) => `inventory:tenant:${tenantId}:in_stock`;
 const CACHE_TTL = 300; // 5 minutes
 
-export const findMatchingGadget = async (messageText: string): Promise<IProduct | null> => {
+export const findMatchingGadget = async (messageText: string, tenantId?: string): Promise<IProduct | null> => {
   try {
-    let availableProducts: IProduct[] = [];
+    if (!tenantId) {
+      logger.warn('⚠️ [MATCHER ENGINE]: Aborting search. Execution frame missing explicit tenantId parameter.');
+      return null;
+    }
 
-    // 1. Read from Redis Cache Layer
-    const cachedInventory = await redisClient.get(CACHE_KEY);
+    let availableProducts: IProduct[] = [];
+    const targetCacheKey = getCacheKey(tenantId);
+
+    // 1. Read from ISOLATED Redis Cache Layer
+    const cachedInventory = await redisClient.get(targetCacheKey);
 
     if (cachedInventory) {
       availableProducts = JSON.parse(cachedInventory);
-      logger.info(`💾 [MATCHER CACHE]: Pulled ${availableProducts.length} items successfully from Redis memory.`);
+      logger.info(`💾 [MATCHER CACHE]: Pulled ${availableProducts.length} items successfully for tenant: ${tenantId}`);
     } else {
-      // 2. Fetch from MongoDB on Cache Miss
-      logger.info('⚠️ [MATCHER CACHE MISS]: Querying MongoDB for available inventory items...');
-      availableProducts = await Product.find({ inStock: true }).lean().exec();
+      // 2. Fetch from MongoDB on Cache Miss - 🌟 RE-ENGINEERED TO FILTER OUT LEGACY SYSTEM DATA ENTRIES
+      logger.info(`⚠️ [MATCHER CACHE MISS]: Querying MongoDB for tenant catalog: ${tenantId}`);
       
-      logger.info(`📦 [MATCHER DB FETCH]: MongoDB returned ${availableProducts.length} items matching { inStock: true }.`);
+      // Enforces strict tenant mapping bounds. Any document without a matching tenantId is dropped.
+      availableProducts = await Product.find({ 
+        tenantId: tenantId, 
+        inStock: true 
+      }).lean().exec();
+      
+      logger.info(`📦 [MATCHER DB FETCH]: MongoDB returned ${availableProducts.length} items matching this active tenant.`);
       
       if (availableProducts.length > 0) {
-        await redisClient.set(CACHE_KEY, JSON.stringify(availableProducts), 'EX', CACHE_TTL);
+        await redisClient.set(targetCacheKey, JSON.stringify(availableProducts), 'EX', CACHE_TTL);
       }
     }
     
     if (availableProducts.length === 0) {
-      logger.warn('❌ [MATCHER ENGINE]: Aborting search. Zero products found with { inStock: true }.');
       return null;
     }
 
     const lowerMessage = messageText.toLowerCase().trim();
 
-    // 3. 🌟 PHASE 1: DIRECT KEYWORD INTERSECTION CHANNEL (Bulletproof for Group Chats)
-    // Loop through stock items and check if the conversational sentence directly contains their identifiers
+    // 3. 🌟 PHASE 1: DIRECT KEYWORD INTERSECTION CHANNEL (Hardened Multi-Token Security)
     for (const product of availableProducts) {
-      // Check Name
-      if (product.name && lowerMessage.includes(product.name.toLowerCase())) {
-        logger.info(`🎯 [DIRECT MATCH - NAME]: Found exact match in text string for: ${product.name}`);
-        return product;
-      }
-      // Check Model Name
-      if (product.modelName && lowerMessage.includes(product.modelName.toLowerCase())) {
-        logger.info(`🎯 [DIRECT MATCH - MODEL]: Found exact match in text string for: ${product.modelName}`);
-        return product;
-      }
-      // Check Aliases Array
+      // A: Verify via Aliases Array (The most reliable conversational anchor)
       if (product.aliases && Array.isArray(product.aliases)) {
         for (const alias of product.aliases) {
           if (alias && lowerMessage.includes(alias.toLowerCase())) {
             logger.info(`🎯 [DIRECT MATCH - ALIAS]: Intercepted alias match ("${alias}") inside text for: ${product.name}`);
-            return product;
+            return product as IProduct;
+          }
+        }
+      }
+
+      // B: Hardened Name Check using Multi-Token Tokenization
+      if (product.name) {
+        const tokens = product.name.toLowerCase().split(/\s+/).filter(t => t.length > 1);
+        const specificTokens = tokens.filter(t => !['pro', 'max', 'plus', 'ultra', 'for', 'sell', 'air'].includes(t));
+        
+        if (specificTokens.length > 0) {
+          const matchesAllTokens = specificTokens.every(token => lowerMessage.includes(token));
+          if (matchesAllTokens) {
+            logger.info(`🎯 [DIRECT MATCH - HIGH DENSITY TOKEN]: Passed verification check for: ${product.name}`);
+            return product as IProduct;
           }
         }
       }
     }
 
-    // 4. 🔥 PHASE 2: FALLBACK FUZZY MATCH ENGINE (Only runs if direct checks miss, to handle typos)
-    logger.info('ℹ️ [MATCHER FALLBACK]: Direct keyword match missed. Invoking back-up fuzzy parsing mechanics...');
-    
+    // 4. 🔥 PHASE 2: FALLBACK FUZZY MATCH ENGINE (Tight thresholds)
     const fuse = new Fuse(availableProducts, {
-      keys: ['name', 'aliases', 'modelName'],
-      threshold: 0.6,
+      keys: [
+        { name: 'aliases', weight: 0.7 },
+        { name: 'name', weight: 0.3 }
+      ],
+      threshold: 0.35, // Tightened further to ensure broad text blocks get discarded cleanly
       ignoreLocation: true,
       includeScore: true,
     });
@@ -77,7 +92,6 @@ export const findMatchingGadget = async (messageText: string): Promise<IProduct 
       return bestMatch;
     }
 
-    logger.info('Exchange scanning complete. No matches found across catalog lists.');
     return null;
   } catch (error) {
     logger.error({ error }, 'Critical failure encountered inside the findMatchingGadget service pipeline');
