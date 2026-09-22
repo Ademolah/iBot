@@ -2,12 +2,13 @@
   "name": "ibot",
   "version": "1.0.0",
   "description": "",
-  "main": "src/index.ts",
-  "scripts": {
-    "dev": "tsx watch src/index.ts | pino-pretty",
-    "build": "tsc",
-    "start": "node src/index.ts"
-  },
+  "main": "dist/index.js",
+"scripts": {
+  "dev": "tsx watch src/index.ts | pino-pretty",
+  "build": "tsc",
+  "start": "node dist/index.js"
+},
+
   "keywords": [],
   "author": "",
   "license": "ISC",
