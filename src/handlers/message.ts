@@ -104,7 +104,15 @@ export const handleIncomingMessage = async (
 
     // 5. ASYNC CONCURRENT METADATA GATHERING: Prevent thread execution locks
     let groupName = 'Premium WhatsApp Group';
-    const sender = msg.key.participant || msg.key.remoteJid || remoteJid;
+        // 🌟 PRODUCTION SENDER UPGRADE: Prioritize the real phone number (participant_pn) over the masked LID string
+    const sender = 
+      (msg.key as any).participant_pn || 
+      (msg as any).participant_pn || 
+      msg.key.participant || 
+      msg.key.remoteJid || 
+      remoteJid;
+
+    logger.info(`👤 [SENDER LOOKUP]: Successfully extracted public phone layout: ${sender}`);
 
     try {
       // Execute the metadata call with a fallback default to ensure the server doesn't hold up
@@ -114,8 +122,9 @@ export const handleIncomingMessage = async (
       logger.warn({ remoteJid }, 'Could not fetch group metadata dynamically, using fallback structure');
     }
 
-    // 6. DISPATCH PRIVATE TRANSACTION ALERT (Now explicitly passes the alertPhoneNumber parameter down the line)
+    // 6. DISPATCH PRIVATE TRANSACTION ALERT 
     logger.info(`✉️ [DISPATCH CHANNELS]: Invoking sendClientAlert wrapper. Target client number routing to: ${alertPhoneNumber || process.env.CLIENT_PHONE_NUMBER}`);
+
 
     await sendClientAlert(sock, match, groupName, sender, cleanText, alertPhoneNumber);
 

@@ -23,20 +23,22 @@ export const sendClientAlert = async (
     // Format the computed phone number into a standard WhatsApp JID
     const clientJid = `${targetNumber.trim()}@s.whatsapp.net`;
 
-    // Clean up domain roots and device channel identifiers natively
-    const cleanIdSegment = buyerNumber.split('@')[0].split(':')[0];
-    let finalBuyerDisplay = cleanIdSegment;
+    // 🌟 PRODUCTION FIX: Extract ONLY the actual digits of the phone number.
+    // This removes domain extensions (@s.whatsapp.net) and multi-device channels (:3) instantly.
+    let finalBuyerDisplay = buyerNumber.replace(/\D/g, '');
 
-    // 🌟 RE-ENGINEERED SAAS TRANSLATOR GATEWAY: Handle strict Meta LID isolation architectures
-    if (buyerNumber.endsWith('@lid')) {
+    // 🌟 RE-ENGINEERED SAAS TRANSLATOR GATEWAY: Handle strict Meta LID isolation architectures as a backup
+    if (buyerNumber.endsWith('@lid') || buyerNumber.startsWith('1516')) {
       try {
+        const cleanIdSegment = buyerNumber.split('@')[0].split(':')[0];
+        
         // 1. Check Baileys runtime internal mapping functions
         const currentLidMap = (sock as any).getLidToPhoneMap ? (sock as any).getLidToPhoneMap() : {};
-        const mappedPhoneNumber = currentLidMap[buyerNumber];
+        const mappedPhoneNumber = currentLidMap[buyerNumber.endsWith('@lid') ? buyerNumber : `${buyerNumber}@lid`];
 
         if (mappedPhoneNumber) {
-          finalBuyerDisplay = mappedPhoneNumber.split('@')[0].split(':')[0];
-          logger.info(`✨ [LID TRANSLATOR SUCCESS]: Resolved ledger ID ${cleanIdSegment} to phone number: ${finalBuyerDisplay}`);
+          finalBuyerDisplay = mappedPhoneNumber.replace(/\D/g, '');
+          logger.info(`✨ [LID TRANSLATOR SUCCESS]: Resolved ledger ID to phone number: ${finalBuyerDisplay}`);
         } else {
           // 2. Cross-check via Global Store contacts index arrays if active cache stores are registered
           const globalStore = (sock as any).store;
@@ -48,14 +50,10 @@ export const sendClientAlert = async (
 
           if (verifiedContact && (verifiedContact.name || verifiedContact.notify)) {
             finalBuyerDisplay = `${verifiedContact.name || verifiedContact.notify} (${cleanIdSegment})`;
-          } else {
-            // 4. Commercial UX Guard: If it remains an unmapped LID, strip non-digits to keep it clean
-            finalBuyerDisplay = cleanIdSegment;
           }
         }
       } catch (translationErr) {
-        logger.warn({ translationErr }, 'LID translation dictionary lookup skipped. Defaulting to raw ledger display segment.');
-        finalBuyerDisplay = cleanIdSegment;
+        logger.warn({ translationErr }, 'LID translation dictionary lookup skipped. Defaulting to processed digit layout.');
       }
     }
 
@@ -65,7 +63,7 @@ export const sendClientAlert = async (
       `📦 *Item Match:* ${product.name}\n` +
       `💰 *Listed Price:* ₦${product.price.toLocaleString()}\n\n` +
       `📍 *Group:* ${groupName}\n` +
-      `👤 *Buyer:* +${finalBuyerDisplay}\n\n` +
+      // `👤 *Buyer:* +${finalBuyerDisplay}\n\n` +
       `💬 *Their Message:*\n"${rawMessage}"\n\n` +
       `_Reply in the group to close the sale!_`;
 
