@@ -157,26 +157,34 @@ router.post('/bot/spawn', protectTenantRoute, async (req: AuthenticatedRequest, 
 // ==========================================
 router.get('/bot/status', protectTenantRoute, async (req: AuthenticatedRequest, res: Response): Promise<any> => {
   try {
-    const instance = await BotInstance.findOne({ tenantId: req.tenantId });
+    const customSessionId = `session-tenant-${req.tenantId}`;
+    
+    // 🌟 SURGICAL KEY ALIGNMENT: Query your instance collection using the exact customSessionId format
+    const instance = await BotInstance.findOne({ sessionId: customSessionId });
     
     if (!instance) {
       return res.status(200).json({
         status: 'success',
-        data: { connectionStatus: 'DISCONNECTED', qrCode: null }
+        data: {
+          connectionStatus: 'DISCONNECTED',
+          qrCode: null
+        }
       });
     }
+
+    // 🔍 SERVER TELEMETRY VERIFICATION LOG
+    logger.info(`📡 [STATUS MONITOR]: Fetching metrics for ${customSessionId}. Status: ${instance.connectionStatus} | Has QR: ${!!instance.lastQrCode}`);
 
     return res.status(200).json({
       status: 'success',
       data: {
-        connectionStatus: instance.connectionStatus,
-        // The frontend dashboard reads this parameter, turns it into a visually scannable QR matrix, and displays it to the user!
-        qrCode: instance.lastQrCode, 
-        updatedAt: instance.updatedAt
+        connectionStatus: instance.connectionStatus || 'DISCONNECTED',
+        qrCode: instance.lastQrCode || null // 🚀 FIXED: Streams the correct property key straight to the React dashboard!
       }
     });
   } catch (error) {
-    return res.status(500).json({ status: 'error', message: 'Failed to check active instance matrix records.' });
+    logger.error({ error }, 'Failed to look up bot status variables.');
+    return res.status(500).json({ status: 'error', message: 'Failed to look up network runtime indicators.' });
   }
 });
 
