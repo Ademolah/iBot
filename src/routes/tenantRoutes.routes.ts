@@ -113,12 +113,12 @@ router.post('/bot/spawn', protectTenantRoute, async (req: AuthenticatedRequest, 
       instance = new BotInstance({
         tenantId: tenant._id,
         sessionId: customSessionId,
-        connectionStatus: 'INITIALIZING', // ⚡ Force tracking parameter out of "CONNECTED" loops
+        connectionStatus: 'DISCONNECTED', // ⚡ Force tracking parameter out of "CONNECTED" loops
         qrCode: null
       });
     } else {
       // If the model entry rows already exist, wipe any stale connection status keys instantly!
-      instance.connectionStatus = 'INITIALIZING';
+      instance.connectionStatus = 'DISCONNECTED';
       instance.qrCode = null;
     }
     await instance.save();
@@ -126,7 +126,7 @@ router.post('/bot/spawn', protectTenantRoute, async (req: AuthenticatedRequest, 
     // 🌟 MULTI-TENANT FAILSAFE BUFFER: Also update your primary Tenant document layout fields 
     // to match, ensuring your status endpoint won't accidentally stream old configurations
     await Tenant.findByIdAndUpdate(tenant._id, {
-      botStatus: 'INITIALIZING',
+      botStatus: 'DISCONNECTED',
       qrCode: null
     });
 
