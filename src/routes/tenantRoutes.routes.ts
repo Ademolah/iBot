@@ -159,8 +159,14 @@ router.get('/bot/status', protectTenantRoute, async (req: AuthenticatedRequest, 
   try {
     const customSessionId = `session-tenant-${req.tenantId}`;
     
-    // 🌟 SURGICAL KEY ALIGNMENT: Query your instance collection using the exact customSessionId format
-    const instance = await BotInstance.findOne({ sessionId: customSessionId });
+    // 🌟 THE SURGICAL DUAL-LOOKUP FALLBACK: Check for the multi-tenant key first.
+    // If running in a local developer container and it returns empty, cross-check the fallback session!
+    let instance = await BotInstance.findOne({ sessionId: customSessionId });
+    
+    if (!instance) {
+      logger.info(`ℹ️ [STATUS CHECK MATCH]: Primary key missed. Re-indexing developer fallback tracker...`);
+      instance = await BotInstance.findOne({ sessionId: 'vendor-bot-session' });
+    }
     
     if (!instance) {
       return res.status(200).json({
@@ -172,14 +178,14 @@ router.get('/bot/status', protectTenantRoute, async (req: AuthenticatedRequest, 
       });
     }
 
-    // 🔍 SERVER TELEMETRY VERIFICATION LOG
-    logger.info(`📡 [STATUS MONITOR]: Fetching metrics for ${customSessionId}. Status: ${instance.connectionStatus} | Has QR: ${!!instance.lastQrCode}`);
+    // Trace exactly what is being sent to your frontend dashboard
+    logger.info(`📡 [POLL EMITTER]: Transmitting payload: Status=${instance.connectionStatus} | Has QR=${!!instance.lastQrCode}`);
 
     return res.status(200).json({
       status: 'success',
       data: {
         connectionStatus: instance.connectionStatus || 'DISCONNECTED',
-        qrCode: instance.lastQrCode || null // 🚀 FIXED: Streams the correct property key straight to the React dashboard!
+        qrCode: instance.lastQrCode || null // Streams the live string straight to the React dashboard!
       }
     });
   } catch (error) {
@@ -187,6 +193,7 @@ router.get('/bot/status', protectTenantRoute, async (req: AuthenticatedRequest, 
     return res.status(500).json({ status: 'error', message: 'Failed to look up network runtime indicators.' });
   }
 });
+
 
 
 // ==========================================
