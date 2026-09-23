@@ -107,19 +107,32 @@ router.post('/bot/spawn', protectTenantRoute, async (req: AuthenticatedRequest, 
 
     const customSessionId = `session-tenant-${tenant._id}`;
 
-    // Upsert the tracking metrics token document safely inside MongoDB
+    // 🌟 SURGICAL CACHE WIPE: Update or reset your BotInstance tracking collection records inside MongoDB
     let instance = await BotInstance.findOne({ tenantId: tenant._id });
     if (!instance) {
       instance = new BotInstance({
         tenantId: tenant._id,
         sessionId: customSessionId,
-        connectionStatus: 'DISCONNECTED'
+        connectionStatus: 'INITIALIZING', // ⚡ Force tracking parameter out of "CONNECTED" loops
+        qrCode: null
       });
-      await instance.save();
+    } else {
+      // If the model entry rows already exist, wipe any stale connection status keys instantly!
+      instance.connectionStatus = 'INITIALIZING';
+      instance.qrCode = null;
     }
+    await instance.save();
 
-    // Non-blocking invocation pattern: Spawns the socket process container loop asynchronously 
-    // inside your server clusters without blocking the standard dashboard HTTP client thread
+    // 🌟 MULTI-TENANT FAILSAFE BUFFER: Also update your primary Tenant document layout fields 
+    // to match, ensuring your status endpoint won't accidentally stream old configurations
+    await Tenant.findByIdAndUpdate(tenant._id, {
+      botStatus: 'INITIALIZING',
+      qrCode: null
+    });
+
+    logger.info(`🚀 [BOT RESET]: Stale database variables wiped clean. Spawning connection for: ${customSessionId}`);
+
+    // Non-blocking invocation pattern: Spawns the socket process container loop asynchronously
     startBot(customSessionId, tenant.alertPhoneNumber).catch(err => {
       logger.error(err, `Asynchronous backend thread failed to start bot for session: ${customSessionId}`);
     });
@@ -129,13 +142,15 @@ router.post('/bot/spawn', protectTenantRoute, async (req: AuthenticatedRequest, 
       message: 'WhatsApp core container service initialization sequence started completely.',
       data: {
         status: 'INITIALIZING',
-        pollEndpoint: '/api/tenant/bot/status' // Tells the frontend UI where to poll for state updates
+        pollEndpoint: '/api/tenant/bot/status'
       }
     });
   } catch (error) {
+    logger.error({ error }, 'Failed to initiate bot spawn transaction loop.');
     return res.status(500).json({ status: 'error', message: 'Failed to initiate dynamic allocation clusters.' });
   }
 });
+
 
 // ==========================================
 // 4. FETCH CURRENT BOT QR / RECONCTION STATUS
