@@ -43,6 +43,12 @@ const CORE_ANCHOR_KEYWORDS = [
 ];
 
 // 🌟 UPGRADED SIGNATURE: Added alertPhoneNumber to match the three arguments sent by event.ts
+
+
+
+// Define static matching criteria configurations natively
+
+
 export const handleIncomingMessage = async (
   sock: WASocket, 
   msg: proto.IWebMessageInfo, 
@@ -90,9 +96,24 @@ export const handleIncomingMessage = async (
       return;
     }
 
-    // 4. INVENTORY QUERY LAYER: Run direct semantic match
-    logger.info(`💾 [DB CACHE QUERY]: Dispatching search strings into the findMatchingGadget service loop...`);
-    const match = await findMatchingGadget(lowerText);
+    // 🌟 SURGICAL EXTRACTOR FIX: Extract the tenant ID key right from the running socket metadata details.
+    // This perfectly strips away "session-tenant-" and isolates the clean MongoDB hex string.
+    const rawSessionId = (sock as any).sessionId || '';
+    let activeTenantId = rawSessionId.replace('session-tenant-', '');
+
+    if (activeTenantId === 'vendor-bot-session' || !activeTenantId) {
+      activeTenantId = process.env.DEV_FALLBACK_TENANT_ID || '';
+      logger.info(`🛠️ [DEV MODE REDIRECT]: Routed system session fallback cleanly to test account: ${activeTenantId}`);
+    }
+
+    if (!activeTenantId) {
+      logger.warn('⚠️ [PIPELINE BLOCKED]: Message skipped. Could not pull the active tenant ID from the running socket container.');
+      return;
+    }
+
+    // 4. INVENTORY QUERY LAYER: Run direct semantic match passing our newly extracted tenant ID context
+    logger.info(`💾 [DB CACHE QUERY]: Dispatching search strings into the findMatchingGadget service loop for tenant: ${activeTenantId}...`);
+    const match = await findMatchingGadget(lowerText, activeTenantId);
     
     if (!match) {
       // 🔍 REAL-TIME DEBUG TRACE 3: Catch empty catalog filter misses or connection freezes transparently
@@ -104,7 +125,8 @@ export const handleIncomingMessage = async (
 
     // 5. ASYNC CONCURRENT METADATA GATHERING: Prevent thread execution locks
     let groupName = 'Premium WhatsApp Group';
-        // 🌟 PRODUCTION SENDER UPGRADE: Prioritize the real phone number (participant_pn) over the masked LID string
+    
+    // 🌟 PRODUCTION SENDER UPGRADE: Prioritize the real phone number (participant_pn) over the masked LID string
     const sender = 
       (msg.key as any).participant_pn || 
       (msg as any).participant_pn || 
@@ -125,7 +147,6 @@ export const handleIncomingMessage = async (
     // 6. DISPATCH PRIVATE TRANSACTION ALERT 
     logger.info(`✉️ [DISPATCH CHANNELS]: Invoking sendClientAlert wrapper. Target client number routing to: ${alertPhoneNumber || process.env.CLIENT_PHONE_NUMBER}`);
 
-
     await sendClientAlert(sock, match, groupName, sender, cleanText, alertPhoneNumber);
 
   } catch (error) {
@@ -133,3 +154,4 @@ export const handleIncomingMessage = async (
     logger.error({ error, msgId: msg.key?.id }, 'Critical failure encountered inside the handleIncomingMessage runtime pipeline');
   }
 };
+
