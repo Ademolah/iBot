@@ -10,44 +10,37 @@ const BUYING_INTENT_KEYWORDS = [
   'where i fit buy', 'available for hire', 'available for rent', 'i check for'
 ];
 
+// 🛑 VENDOR NOISE FILTER: Stop competitors' broadcast posts from triggering false alerts
+const SELLING_INTENT_KEYWORDS = [
+  'for sale', 'selling', 'available now', 'in stock', 'dm for', 'hit me up', 
+  'restocked', 'we have', 'price list', 'giveaway price', 'vendor', 
+  'deal of the day', 'available for pickup'
+];
+
 // 🌟 ANCHOR ASSETS: High-value fallback keywords to detect even if no intent phrase is captured
 const CORE_ANCHOR_KEYWORDS = [
   // --- VEHICLES & RENTALS ---
   'prado', 'suv', 'toyota', 'lexus', 'honda', 'mercedes', 'benz', 'g-wagon', 'range rover', 
   'hilux', 'sienna', 'bus', 'car for hire', 'car rental',
-
   // --- APPLE ECOSYSTEM ---
   'iphone', 'macbook', 'mac', 'ipad', 'airpods', 'iwatch', 'apple watch', 'imac', 
   'pro max', 'm1', 'm2', 'm3', 'm4',
-
   // --- LAPTOPS & COMPUTERS ---
   'laptop', 'hp', 'dell', 'lenovo', 'thinkpad', 'asus', 'acer', 'toshiba', 'surface pro', 
   'desktop', 'monitor', 'pc', 'hard drive', 'ssd', 'ram', 'core i5', 'core i7', 'core i9',
-
   // --- SMARTPHONES & TABLETS (ANDROID) ---
   'samsung', 'galaxy', 'ultra', 'redmi', 'xiaomi', 'infinix', 'techno', 'tecno', 'oppo', 
   'vivo', 'pixel', 'google pixel', 'tablet', 'tab',
-
   // --- GAMING CONSOLES & TECH ---
   'playstation', 'ps4', 'ps5', 'xbox', 'nintendo', 'gaming pc', 'pad', 'controller',
-
   // --- TELEVISIONS & HOME AUDIO ---
   'television', 'tv', 'smart tv', 'lg', 'hisense', 'sony', 'panasonic', 'soundbar', 
   'home theater', 'speaker', 'jbl',
-
   // --- OFFICE & WORKSTATION ELECTRONICS ---
   'printer', 'scanner', 'projector', 'inverter', 'solar panel', 'battery', 'generator', 'gen',
-
   // --- PHOTOGRAPHY & PRODUCTION ---
   'camera', 'canon', 'nikon', 'sony alpha', 'drone', 'dji', 'ring light', 'microphone', 'mic'
 ];
-
-// 🌟 UPGRADED SIGNATURE: Added alertPhoneNumber to match the three arguments sent by event.ts
-
-
-
-// Define static matching criteria configurations natively
-
 
 export const handleIncomingMessage = async (
   sock: WASocket, 
@@ -85,6 +78,13 @@ export const handleIncomingMessage = async (
     }
 
     // 3. DYNAMIC INTENT VERIFICATION LOGIC
+    // Check if it's a vendor selling, drop the message immediately to prevent noise
+    const hasSellIntent = SELLING_INTENT_KEYWORDS.some((keyword) => lowerText.includes(keyword));
+    if (hasSellIntent) {
+      logger.info(`🛑 [SELLER FILTER]: Dropped vendor broadcast/ad. Keeping pipeline clean.`);
+      return;
+    }
+
     const hasExplicitIntent = BUYING_INTENT_KEYWORDS.some((keyword) => lowerText.includes(keyword));
     const mentionsCoreAnchor = CORE_ANCHOR_KEYWORDS.some((anchor) => lowerText.includes(anchor));
 
@@ -97,7 +97,6 @@ export const handleIncomingMessage = async (
     }
 
     // 🌟 SURGICAL EXTRACTOR FIX: Extract the tenant ID key right from the running socket metadata details.
-    // This perfectly strips away "session-tenant-" and isolates the clean MongoDB hex string.
     const rawSessionId = (sock as any).sessionId || '';
     let activeTenantId = rawSessionId.replace('session-tenant-', '');
 
@@ -111,22 +110,21 @@ export const handleIncomingMessage = async (
       return;
     }
 
-    // 4. INVENTORY QUERY LAYER: Run direct semantic match passing our newly extracted tenant ID context
-    logger.info(`💾 [DB CACHE QUERY]: Dispatching search strings into the findMatchingGadget service loop for tenant: ${activeTenantId}...`);
+    // 4. INVENTORY QUERY LAYER: Run direct semantic match
+    logger.info(`💾 [DB CACHE QUERY]: Dispatching search strings into the findMatchingGadget service loop...`);
     const match = await findMatchingGadget(lowerText, activeTenantId);
     
-    if (!match) {
-      // 🔍 REAL-TIME DEBUG TRACE 3: Catch empty catalog filter misses or connection freezes transparently
-      logger.info(`❌ [MATCHER MISS]: findMatchingGadget evaluated to null. No fuzzy index matches exist in your active stock list.`);
+    // 🚀 NEW LOGIC BYPASS: If no match is found, but they explicitly said "I need", ALLOW IT THROUGH!
+    if (!match && !hasExplicitIntent) {
+      logger.info(`❌ [MATCHER MISS]: No index matches AND no explicit buying intent. Dropping silently.`);
       return;
     }
 
-    logger.info(`✨ [COMMERCIAL MATCH]: Found item (${match.name}) from sender in group ${remoteJid}`);
+    logger.info(`✨ [COMMERCIAL GATEWAY]: Lead validated. Sending to dispatch channel.`);
 
-    // 5. ASYNC CONCURRENT METADATA GATHERING: Prevent thread execution locks
+    // 5. ASYNC CONCURRENT METADATA GATHERING
     let groupName = 'Premium WhatsApp Group';
     
-    // 🌟 PRODUCTION SENDER UPGRADE: Prioritize the real phone number (participant_pn) over the masked LID string
     const sender = 
       (msg.key as any).participant_pn || 
       (msg as any).participant_pn || 
@@ -137,7 +135,6 @@ export const handleIncomingMessage = async (
     logger.info(`👤 [SENDER LOOKUP]: Successfully extracted public phone layout: ${sender}`);
 
     try {
-      // Execute the metadata call with a fallback default to ensure the server doesn't hold up
       const groupMetadata = await sock.groupMetadata(remoteJid);
       groupName = groupMetadata.subject || groupName;
     } catch (metaErr) {
@@ -145,13 +142,12 @@ export const handleIncomingMessage = async (
     }
 
     // 6. DISPATCH PRIVATE TRANSACTION ALERT 
-    logger.info(`✉️ [DISPATCH CHANNELS]: Invoking sendClientAlert wrapper. Target client number routing to: ${alertPhoneNumber || process.env.CLIENT_PHONE_NUMBER}`);
+    logger.info(`✉️ [DISPATCH CHANNELS]: Invoking sendClientAlert wrapper.`);
 
-    await sendClientAlert(sock, match, groupName, sender, cleanText, alertPhoneNumber);
+    // Note the 7th argument `hasExplicitIntent` is strictly passed here
+    await sendClientAlert(sock, match, groupName, sender, cleanText, alertPhoneNumber, hasExplicitIntent);
 
   } catch (error) {
-    // Top-level pipeline protection: Ensure an isolated processing fault never kills the server process
     logger.error({ error, msgId: msg.key?.id }, 'Critical failure encountered inside the handleIncomingMessage runtime pipeline');
   }
 };
-
