@@ -3,43 +3,17 @@ import { findMatchingGadget } from '../services/matcher.js';
 import { sendClientAlert } from '../services/alert.js';
 import { logger } from '../utils/logger.js';
 
-// 🌟 COMMERCIAL GRADED INTENT KEYWORDS: Rich localization targeting Nigerian vendor chat structures
 const BUYING_INTENT_KEYWORDS = [
   'need', 'want', 'looking for', 'who has', 'price for', 'lf', 'wtb',
   'how much is', 'how much for', 'cost of', 'who get', 'who dey sell',
-  'where i fit buy', 'available for hire', 'available for rent', 'i check for'
+  'where i fit buy', 'available for hire', 'available for rent', 'i check for',
+  'who get am', 'anyone with', 'do you have', 'in need of', 'urgent need'
 ];
 
-// 🛑 VENDOR NOISE FILTER: Stop competitors' broadcast posts from triggering false alerts
 const SELLING_INTENT_KEYWORDS = [
   'for sale', 'selling', 'available now', 'in stock', 'dm for', 'hit me up', 
   'restocked', 'we have', 'price list', 'giveaway price', 'vendor', 
-  'deal of the day', 'available for pickup'
-];
-
-// 🌟 ANCHOR ASSETS: High-value fallback keywords to detect even if no intent phrase is captured
-const CORE_ANCHOR_KEYWORDS = [
-  // --- VEHICLES & RENTALS ---
-  'prado', 'suv', 'toyota', 'lexus', 'honda', 'mercedes', 'benz', 'g-wagon', 'range rover', 
-  'hilux', 'sienna', 'bus', 'car for hire', 'car rental',
-  // --- APPLE ECOSYSTEM ---
-  'iphone', 'macbook', 'mac', 'ipad', 'airpods', 'iwatch', 'apple watch', 'imac', 
-  'pro max', 'm1', 'm2', 'm3', 'm4',
-  // --- LAPTOPS & COMPUTERS ---
-  'laptop', 'hp', 'dell', 'lenovo', 'thinkpad', 'asus', 'acer', 'toshiba', 'surface pro', 
-  'desktop', 'monitor', 'pc', 'hard drive', 'ssd', 'ram', 'core i5', 'core i7', 'core i9',
-  // --- SMARTPHONES & TABLETS (ANDROID) ---
-  'samsung', 'galaxy', 'ultra', 'redmi', 'xiaomi', 'infinix', 'techno', 'tecno', 'oppo', 
-  'vivo', 'pixel', 'google pixel', 'tablet', 'tab',
-  // --- GAMING CONSOLES & TECH ---
-  'playstation', 'ps4', 'ps5', 'xbox', 'nintendo', 'gaming pc', 'pad', 'controller',
-  // --- TELEVISIONS & HOME AUDIO ---
-  'television', 'tv', 'smart tv', 'lg', 'hisense', 'sony', 'panasonic', 'soundbar', 
-  'home theater', 'speaker', 'jbl',
-  // --- OFFICE & WORKSTATION ELECTRONICS ---
-  'printer', 'scanner', 'projector', 'inverter', 'solar panel', 'battery', 'generator', 'gen',
-  // --- PHOTOGRAPHY & PRODUCTION ---
-  'camera', 'canon', 'nikon', 'sony alpha', 'drone', 'dji', 'ring light', 'microphone', 'mic'
+  'deal of the day', 'available for pickup', 'pay on delivery', 'swap available'
 ];
 
 export const handleIncomingMessage = async (
@@ -48,14 +22,11 @@ export const handleIncomingMessage = async (
   alertPhoneNumber?: string
 ) => {
   try {
-    // 1. PRODUCTION GUARD CLAUSE: Ensure structure exists AND filter out the bot's own outgoing replies
     if (!msg.key || !msg.message || msg.key.fromMe) return;
 
     const remoteJid = msg.key.remoteJid;
-    // Strictly isolate group chats to prevent personal DM spam streams
     if (!remoteJid || !remoteJid.endsWith('@g.us')) return;
 
-    // 2. ROBUST TEXT EXTRACTION: Capture standard, extended, context-replies, and image/media captions
     const messageText = 
       msg.message.conversation || 
       msg.message.extendedTextMessage?.text ||
@@ -67,87 +38,67 @@ export const handleIncomingMessage = async (
 
     const lowerText = cleanText.toLowerCase();
 
-    // 🔍 REAL-TIME DEBUG TRACE 1: Entry Confirmation
-    logger.info(`🔍 [PIPELINE ENTRY]: Intercepted raw text stream: "${cleanText}" inside group: ${remoteJid}`);
+    logger.info(`[PIPELINE ENTRY]: Intercepted text in group ${remoteJid}: "${cleanText}"`);
 
-    // 🚀 QUICK RE-ADD TEST COMMANDS (Bypasses matcher for easier system testing if needed)
     if (lowerText === '!ping') {
-      logger.info('🎯 [TEST SUCCESS]: Intercepted !ping baseline verification handler token.');
-      await sock.sendMessage(remoteJid, { text: '🤖 *iBot Online:* Dynamic multi-tenant pipeline active! ⚡' });
+      await sock.sendMessage(remoteJid, { text: 'iBot Online: Multi-tenant pipeline active.' });
       return;
     }
 
-    // 3. DYNAMIC INTENT VERIFICATION LOGIC
-    // Check if it's a vendor selling, drop the message immediately to prevent noise
+    // 1. FILTER OUT SELLER BROADCASTS
     const hasSellIntent = SELLING_INTENT_KEYWORDS.some((keyword) => lowerText.includes(keyword));
     if (hasSellIntent) {
-      logger.info(`🛑 [SELLER FILTER]: Dropped vendor broadcast/ad. Keeping pipeline clean.`);
+      logger.info(`[SELLER FILTER]: Dropped broadcast message.`);
       return;
     }
 
+    // 2. ENFORCE STRICT BUYING INTENT DETECTOR
     const hasExplicitIntent = BUYING_INTENT_KEYWORDS.some((keyword) => lowerText.includes(keyword));
-    const mentionsCoreAnchor = CORE_ANCHOR_KEYWORDS.some((anchor) => lowerText.includes(anchor));
 
-    // 🔍 REAL-TIME DEBUG TRACE 2: Evaluation Score Metrics
-    logger.info(`📊 [KEYWORD CHECK]: hasExplicitIntent=${hasExplicitIntent} | mentionsCoreAnchor=${mentionsCoreAnchor}`);
-
-    if (!hasExplicitIntent && !mentionsCoreAnchor) {
-      logger.info(`⏭️ [PIPELINE SKIP]: Message text drop. Does not match intent or anchor signatures.`);
+    if (!hasExplicitIntent) {
+      logger.info(`[PIPELINE SKIP]: Message dropped due to lack of explicit buying intent.`);
       return;
     }
 
-    // 🌟 SURGICAL EXTRACTOR FIX: Extract the tenant ID key right from the running socket metadata details.
+    // 3. TENANT ISOLATION LOOKUP
     const rawSessionId = (sock as any).sessionId || '';
     let activeTenantId = rawSessionId.replace('session-tenant-', '');
 
     if (activeTenantId === 'vendor-bot-session' || !activeTenantId) {
       activeTenantId = process.env.DEV_FALLBACK_TENANT_ID || '';
-      logger.info(`🛠️ [DEV MODE REDIRECT]: Routed system session fallback cleanly to test account: ${activeTenantId}`);
     }
 
     if (!activeTenantId) {
-      logger.warn('⚠️ [PIPELINE BLOCKED]: Message skipped. Could not pull the active tenant ID from the running socket container.');
+      logger.warn('[PIPELINE BLOCKED]: Missing active tenant ID.');
       return;
     }
 
-    // 4. INVENTORY QUERY LAYER: Run direct semantic match
-    logger.info(`💾 [DB CACHE QUERY]: Dispatching search strings into the findMatchingGadget service loop...`);
+    // 4. INVENTORY QUERY LAYER
     const match = await findMatchingGadget(lowerText, activeTenantId);
-    
-    // 🚀 NEW LOGIC BYPASS: If no match is found, but they explicitly said "I need", ALLOW IT THROUGH!
-    if (!match && !hasExplicitIntent) {
-      logger.info(`❌ [MATCHER MISS]: No index matches AND no explicit buying intent. Dropping silently.`);
-      return;
-    }
 
-    logger.info(`✨ [COMMERCIAL GATEWAY]: Lead validated. Sending to dispatch channel.`);
+    logger.info(`[COMMERCIAL GATEWAY]: Lead validated (Match: ${match ? match.name : 'None'}). Dispatching alert...`);
 
-    // 5. ASYNC CONCURRENT METADATA GATHERING
-    let groupName = 'Premium WhatsApp Group';
-    
+    // 5. EXTRACT METADATA & SENDER JID
+    let groupName = 'WhatsApp Group';
+
+    // Prioritize participant_pn (Phone Number) over LID identifiers
     const sender = 
       (msg.key as any).participant_pn || 
       (msg as any).participant_pn || 
       msg.key.participant || 
-      msg.key.remoteJid || 
       remoteJid;
-
-    logger.info(`👤 [SENDER LOOKUP]: Successfully extracted public phone layout: ${sender}`);
 
     try {
       const groupMetadata = await sock.groupMetadata(remoteJid);
       groupName = groupMetadata.subject || groupName;
     } catch (metaErr) {
-      logger.warn({ remoteJid }, 'Could not fetch group metadata dynamically, using fallback structure');
+      logger.warn({ remoteJid }, 'Failed to fetch group subject, using fallback.');
     }
 
-    // 6. DISPATCH PRIVATE TRANSACTION ALERT 
-    logger.info(`✉️ [DISPATCH CHANNELS]: Invoking sendClientAlert wrapper.`);
-
-    // Note the 7th argument `hasExplicitIntent` is strictly passed here
+    // 6. DISPATCH PRIVATE TRANSACTION ALERT
     await sendClientAlert(sock, match, groupName, sender, cleanText, alertPhoneNumber, hasExplicitIntent);
 
   } catch (error) {
-    logger.error({ error, msgId: msg.key?.id }, 'Critical failure encountered inside the handleIncomingMessage runtime pipeline');
+    logger.error({ error, msgId: msg.key?.id }, 'Error inside handleIncomingMessage pipeline');
   }
 };
