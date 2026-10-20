@@ -1,7 +1,7 @@
 import makeWASocket, {
   DisconnectReason,
   makeCacheableSignalKeyStore,
-  ConnectionState, 
+  ConnectionState,
 } from '@whiskeysockets/baileys';
 import { Boom } from '@hapi/boom';
 import qrcode from 'qrcode-terminal';
@@ -9,41 +9,45 @@ import { logger } from '../utils/logger.js';
 import { useRedisAuthState } from './auth.js';
 import { redisClient } from '../config/redis.js';
 import { setupMessageListeners } from './event.js';
-import { BotInstance } from '../models/Tenant.js'; // Successfully wired to your core schemas
+import { BotInstance } from '../models/Tenant.js'; 
 
-// 🌟 COMMERCIAL SaaS REFACTOR: Accepts dynamic session definitions per active subscriber
+// 🌟 SESSION MANAGER: Prevent duplicate sockets for the same tenant
+export const activeSessions = new Map<string, any>();
+
 export const startBot = async (sessionId: string = 'vendor-bot-session', alertPhoneNumber?: string) => {
+  // Prevent duplicate connections if the session is already active in memory
+  if (activeSessions.has(sessionId)) {
+    logger.warn(`Session [${sessionId}] is already running. Returning existing instance to prevent conflict.`);
+    return activeSessions.get(sessionId);
+  }
+
   logger.info(`Initializing iBot Instance for Session: [${sessionId}]...`);
 
-  // Initialize our custom Redis Auth using the dynamic dynamic tenant sessionId namespace
   const { state, saveCreds } = await useRedisAuthState(redisClient, sessionId);
 
-  // 2. Call makeWASocket directly with unique child logging context per instance
   const sock = makeWASocket({
     auth: {
       creds: state.creds,
-      // Wrap the keys in a cache layer to drastically speed up processing times
       keys: makeCacheableSignalKeyStore(state.keys, logger),
     },
-    printQRInTerminal: false, // We will handle this manually below
+    printQRInTerminal: false,
     logger: logger.child({ module: `baileys-${sessionId}`, level: 'warn' }),
-    browser: ['Mac OS', 'Chrome', '1.0.0'],  // Identifies the bot cleanly
-    syncFullHistory: false, // Prevents downloading years of old group messages on start
+    browser: ['Mac OS', 'Chrome', '1.0.0'], 
+    syncFullHistory: false, 
   });
 
-  // 🌟 Context Attachment: Keep track of sessionId right on the socket instance
   (sock as any).sessionId = sessionId;
 
-  // 3. Handle dynamic connection lifecycles per running client container
+  // Add the newly created socket to our active sessions map
+  activeSessions.set(sessionId, sock);
+
   sock.ev.on('connection.update', async (update: Partial<ConnectionState>) => {
     const { connection, lastDisconnect, qr } = update;
 
-    // A: IF A FRESH QR IS BROADCASTED FROM META
     if (qr) {
       logger.info(`✨ [QR GENERATED] Session: [${sessionId}]. Syncing matrix string to MongoDB catalog...`);
       
       try {
-        // Save raw string to MongoDB. Your React dashboard polls this field to render the dynamic canvas!
         await BotInstance.findOneAndUpdate(
           { sessionId },
           { connectionStatus: 'GENERATING_QR', lastQrCode: qr, updatedAt: new Date() }
@@ -52,22 +56,22 @@ export const startBot = async (sessionId: string = 'vendor-bot-session', alertPh
         logger.error({ dbErr, sessionId }, 'Failed to write active QR matrix to database records');
       }
 
-      // Keep this intact so you can still scan directly from your terminal during testing!
       qrcode.generate(qr, { small: true });
     }
 
-    // B: IF CONNECTION DROPS OR CLOSES
     if (connection === 'close') {
-      const shouldReconnect =
-        (lastDisconnect?.error as Boom)?.output?.statusCode !== DisconnectReason.loggedOut;
+      // Clean up the active session map immediately upon closure
+      activeSessions.delete(sessionId);
+
+      const statusCode = (lastDisconnect?.error as Boom)?.output?.statusCode;
+      const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
       
       logger.warn(
-        { reason: (lastDisconnect?.error as Boom)?.output?.statusCode, sessionId },
+        { reason: statusCode, sessionId },
         'Connection closed.'
       );
 
       try {
-        // Clear old QR strings and drop status to DISCONNECTED inside MongoDB safely
         await BotInstance.findOneAndUpdate(
           { sessionId },
           { connectionStatus: 'DISCONNECTED', lastQrCode: null, updatedAt: new Date() }
@@ -77,19 +81,23 @@ export const startBot = async (sessionId: string = 'vendor-bot-session', alertPh
       }
 
       if (shouldReconnect) {
-        logger.info(`Attempting to reconnect dynamic session: [${sessionId}]...`);
-        startBot(sessionId, alertPhoneNumber); // Re-initialize specific dynamic tenant instance loops
+        // Handle stream conflicts and standard reconnects with a backoff delay
+        if (statusCode === 428 || statusCode === 440 || statusCode === DisconnectReason.connectionReplaced) {
+          logger.warn(`Stream conflict detected for [${sessionId}]. Waiting 5 seconds to let stale streams drop before reconnecting...`);
+          setTimeout(() => startBot(sessionId, alertPhoneNumber), 5000);
+        } else {
+          logger.info(`Attempting to reconnect dynamic session: [${sessionId}] in 2 seconds...`);
+          setTimeout(() => startBot(sessionId, alertPhoneNumber), 2000);
+        }
       } else {
         logger.fatal(`Bot instance [${sessionId}] was logged out. You must clear Redis keys and scan a new QR code.`);
       }
     } 
     
-    // C: IF LOGIN HANDSHAKE COMPLETES SUCCESSFULLY
     else if (connection === 'open') {
       logger.info(`✅ WhatsApp connection successfully established for session: [${sessionId}]!`);
       
       try {
-        // Update database to CONNECTED. The dashboard immediately stops polling and displays "Active"
         await BotInstance.findOneAndUpdate(
           { sessionId },
           { connectionStatus: 'CONNECTED', lastQrCode: null, updatedAt: new Date() }
@@ -100,7 +108,6 @@ export const startBot = async (sessionId: string = 'vendor-bot-session', alertPh
     }
   });
 
-  // Save credentials continuously as Meta rotates encryption keys
   sock.ev.on('creds.update', async () => {
     try {
       await saveCreds();
@@ -109,12 +116,10 @@ export const startBot = async (sessionId: string = 'vendor-bot-session', alertPh
     }
   });
 
-  // 🌟 Dynamic Attachment Layer: Store the custom alert number context inside the socket object instance
   if (alertPhoneNumber) {
     (sock as any).alertPhoneNumber = alertPhoneNumber;
   }
 
-  // Future Event Listener hook for Phase 3 (Message listening)
   setupMessageListeners(sock);
 
   return sock;
