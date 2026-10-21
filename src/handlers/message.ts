@@ -81,13 +81,6 @@ export const handleIncomingMessage = async (
     // 5. EXTRACT METADATA & SENDER JID
     let groupName = 'WhatsApp Group';
 
-    // Prioritize participant_pn (Phone Number) over LID identifiers
-    const sender = 
-      (msg.key as any).participant_pn || 
-      (msg as any).participant_pn || 
-      msg.key.participant || 
-      remoteJid;
-
     try {
       const groupMetadata = await sock.groupMetadata(remoteJid);
       groupName = groupMetadata.subject || groupName;
@@ -95,8 +88,44 @@ export const handleIncomingMessage = async (
       logger.warn({ remoteJid }, 'Failed to fetch group subject, using fallback.');
     }
 
-    // 6. DISPATCH PRIVATE TRANSACTION ALERT
+    // A. Grab the raw participant ID
+    const rawParticipant = 
+      (msg.key as any).participant_pn || 
+      (msg as any).participant_pn || 
+      msg.key.participant || 
+      remoteJid;
+
+    // B. Grab the WhatsApp display name
+    const pushName = msg.pushName || 'Unknown Buyer';
+
+    // C. Surgically format the display string for the Vendor Alert
+    let sender = typeof rawParticipant === 'string' ? rawParticipant : 'Unknown';
+    
+    if (typeof rawParticipant === 'string') {
+      if (rawParticipant.includes('@lid')) {
+        // Privacy enabled: Strip the LID number and show Username
+        sender = pushName;
+      } else if (rawParticipant.includes('@s.whatsapp.net')) {
+        // Standard number: Extract digits and append username
+        const phoneNumber = rawParticipant.split('@')[0];
+        sender = `+${phoneNumber} (${pushName})`;
+      }
+    }
+
+    // 6. DISPATCH PRIVATE TRANSACTION ALERT TO VENDOR
     await sendClientAlert(sock, match, groupName, sender, cleanText, alertPhoneNumber, hasExplicitIntent);
+
+    // 7. SEAMLESS UX: AUTO-DM THE BUYER (If they are using an LID)
+    if (typeof rawParticipant === 'string' && rawParticipant.includes('@lid')) {
+      try {
+        await sock.sendMessage(rawParticipant, { 
+          text: `Hi ${pushName}, I am the automated assistant for this vendor. \n\nWe have the item you just requested in stock! Tap the link below to chat with the vendor directly to close the deal:\n\nhttps://wa.me/${alertPhoneNumber}` 
+        });
+        logger.info(`Successfully routed LID buyer (${pushName}) to the vendor via auto-DM.`);
+      } catch (dmErr) {
+        logger.error({ dmErr }, 'Failed to auto-DM the LID buyer');
+      }
+    }
 
   } catch (error) {
     logger.error({ error, msgId: msg.key?.id }, 'Error inside handleIncomingMessage pipeline');
