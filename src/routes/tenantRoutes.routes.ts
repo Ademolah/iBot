@@ -5,6 +5,7 @@ import { Product } from '../models/Product.js'; // 🌟 SURGICAL FIX: Loaded fro
 import { startBot } from '../bot/socket.js';
 import { redisClient } from '../config/redis.js';
 import { logger } from '../utils/logger.js';
+import { activeSessions } from '../bot/socket.js';
 
 const router = Router();
 
@@ -98,6 +99,7 @@ router.post('/inventory', protectTenantRoute, async (req: AuthenticatedRequest, 
 // ==========================================
 // 3. INITIALIZE / SPAWN WHATSAPP QR INSTANCE
 // ==========================================
+
 router.post('/bot/spawn', protectTenantRoute, async (req: AuthenticatedRequest, res: Response): Promise<any> => {
   try {
     const tenant = await Tenant.findById(req.tenantId);
@@ -107,24 +109,41 @@ router.post('/bot/spawn', protectTenantRoute, async (req: AuthenticatedRequest, 
 
     const customSessionId = `session-tenant-${tenant._id}`;
 
-    // 🌟 SURGICAL CACHE WIPE: Update or reset your BotInstance tracking collection records inside MongoDB
+    // 🌟 1. SURGICAL TEARDOWN: Kill the existing live socket if it is running
+    if (activeSessions.has(customSessionId)) {
+      logger.info(`🛑 [BOT RESET]: Active session detected for ${customSessionId}. Terminating...`);
+      const oldSocket = activeSessions.get(customSessionId);
+      
+      try {
+        // Explicitly tell Meta to log out and destroy the cryptographic session
+        await oldSocket.logout(); 
+      } catch (e) {
+        // Fallback: force close the WebSocket stream if logout fails
+        oldSocket.end(undefined); 
+      }
+      
+      activeSessions.delete(customSessionId);
+      
+      // Give the network 1.5 seconds to fully drop the stream to prevent a 428 Conflict
+      await new Promise(resolve => setTimeout(resolve, 1500));
+    }
+
+    // 🌟 2. SURGICAL CACHE WIPE: Update or reset your BotInstance tracking collection
     let instance = await BotInstance.findOne({ tenantId: tenant._id });
     if (!instance) {
       instance = new BotInstance({
         tenantId: tenant._id,
         sessionId: customSessionId,
-        connectionStatus: 'DISCONNECTED', // ⚡ Force tracking parameter out of "CONNECTED" loops
+        connectionStatus: 'DISCONNECTED', 
         qrCode: null
       });
     } else {
-      // If the model entry rows already exist, wipe any stale connection status keys instantly!
       instance.connectionStatus = 'DISCONNECTED';
       instance.qrCode = null;
     }
     await instance.save();
 
-    // 🌟 MULTI-TENANT FAILSAFE BUFFER: Also update your primary Tenant document layout fields 
-    // to match, ensuring your status endpoint won't accidentally stream old configurations
+    // 🌟 3. MULTI-TENANT FAILSAFE BUFFER
     await Tenant.findByIdAndUpdate(tenant._id, {
       botStatus: 'DISCONNECTED',
       qrCode: null
@@ -132,7 +151,7 @@ router.post('/bot/spawn', protectTenantRoute, async (req: AuthenticatedRequest, 
 
     logger.info(`🚀 [BOT RESET]: Stale database variables wiped clean. Spawning connection for: ${customSessionId}`);
 
-    // Non-blocking invocation pattern: Spawns the socket process container loop asynchronously
+    // Non-blocking invocation pattern
     startBot(customSessionId, tenant.alertPhoneNumber).catch(err => {
       logger.error(err, `Asynchronous backend thread failed to start bot for session: ${customSessionId}`);
     });
@@ -150,7 +169,6 @@ router.post('/bot/spawn', protectTenantRoute, async (req: AuthenticatedRequest, 
     return res.status(500).json({ status: 'error', message: 'Failed to initiate dynamic allocation clusters.' });
   }
 });
-
 
 // ==========================================
 // 4. FETCH CURRENT BOT QR / RECONCTION STATUS
