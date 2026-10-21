@@ -7,7 +7,7 @@ export const sendClientAlert = async (
   sock: WASocket,
   product: IProduct | null,
   groupName: string,
-  buyerNumber: string,
+  buyerDisplay: string,
   rawMessage: string,
   alertPhoneNumber?: string,
   hasExplicitIntent?: boolean
@@ -22,44 +22,40 @@ export const sendClientAlert = async (
 
     const clientJid = `${targetNumber.trim()}@s.whatsapp.net`;
 
-    let finalBuyerDisplay = '';
-    const cleanJid = buyerNumber.split('@')[0].split(':')[0];
-
-    // Meta hides community members behind LIDs (Ledger IDs) usually starting with 1516
-    if (buyerNumber.includes('@lid') || cleanJid.startsWith('1516')) {
-      finalBuyerDisplay = 'Hidden Number (Reply directly in the group)';
-    } else {
-      finalBuyerDisplay = `+${cleanJid} (wa.me/${cleanJid})`;
-    }
-
     let alertText = '';
 
     if (product) {
+      // 🌟 1. DIRECT CATALOG MATCH TEMPLATE
       alertText = 
-        `[SALES ALERT: DIRECT MATCH]\n\n` +
-        `Item: ${product.name}\n` +
-        `Price: NGN ${product.price.toLocaleString()}\n` +
-        `Buyer: ${finalBuyerDisplay}\n` +
-        `Group: ${groupName}\n` +
-        `Message: "${rawMessage}"`;
+        `🚨 *SALES ALERT: DIRECT MATCH* 🚨\n\n` +
+        `Someone is looking for an item you have in stock!\n\n` +
+        `📦 *Item Match:* ${product.name}\n` +
+        `💰 *Listed Price:* ₦${product.price.toLocaleString()}\n\n` +
+        `📍 *Group:* ${groupName}\n` +
+        `👤 *Buyer:* ${buyerDisplay}\n\n` +
+        `💬 *Their Message:*\n"${rawMessage}"\n\n` +
+        `_Reply in the group or chat the buyer to close the sale!_`;
     } else if (hasExplicitIntent) {
+      // 🌟 2. BROAD MARKET LEAD TEMPLATE (Unmatched Sourcing Opportunity)
       alertText = 
-        `[HOT MARKET LEAD]\n\n` +
-        `Status: Not in inventory (Source it!)\n` +
-        `Buyer: ${finalBuyerDisplay}\n` +
-        `Group: ${groupName}\n` +
-        `Message: "${rawMessage}"`;
+        `🔥 *HOT MARKET LEAD (UNMATCHED)* 🔥\n\n` +
+        `Someone posted a buying request in a group!\n\n` +
+        `🏷️ *Status:* Not in catalog (Great sourcing opportunity!)\n\n` +
+        `📍 *Group:* ${groupName}\n` +
+        `👤 *Buyer:* ${buyerDisplay}\n\n` +
+        `💬 *Their Request:*\n"${rawMessage}"\n\n` +
+        `_Reply in the group or chat the buyer to close the deal!_`;
     } else {
       return;
     }
 
     await sock.sendPresenceUpdate('composing', clientJid);
-    await new Promise((resolve) => setTimeout(resolve, 2000));
+    await new Promise((resolve) => setTimeout(resolve, 1500));
     await sock.sendPresenceUpdate('paused', clientJid);
 
     await sock.sendMessage(clientJid, { text: alertText });
     
-    const logItemName = product ? product.name : 'Out-of-stock lead';
+    const logItemName = product ? product.name : 'Unmatched Market Lead';
     logger.info(`Alert successfully dispatched to dynamic client JID: ${clientJid} for: ${logItemName}`);
     
   } catch (error) {
